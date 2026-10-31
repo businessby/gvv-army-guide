@@ -47,11 +47,67 @@ function syncSpin(){$('gvv-spin').disabled=spinning||!active||active.is_open||en
 async function setState(isOpen){if(!active)return;const {error}=await client.from('giveaways').update({is_open:isOpen,status:isOpen?'open':'closed'}).eq('id',active.id);if(error){say('Änderung fehlgeschlagen: '+error.message);return;}say(isOpen?'Anmeldung geöffnet.':'Anmeldung geschlossen.');await loadData();}
 async function save(){if(!active)return;const prize=$('gvv-prize-input').value.trim(),keyword=$('gvv-keyword-input').value.trim();if(!prize||!/^![\wäöüÄÖÜß-]{1,40}$/u.test(keyword)){say('Bitte Gewinn und ein gültiges Codewort beginnend mit ! eingeben.');return;}
 const {error}=await client.from('giveaways').update({prize,keyword}).eq('id',active.id);if(error){say('Speichern fehlgeschlagen: '+error.message);return;}say('Änderungen gespeichert!');await loadData();}
-async function spin(){if(!active||active.is_open||spinning||active.winner||entries.length<2)return;spinning=true;syncSpin();say('Auslosung läuft …');const index=chooseIndex(entries.length),winner=entries[index];
-const target=(360-(index+.5)*360/entries.length+360)%360;const current=((angle%360)+360)%360;angle+=360*7+((target-current+360)%360);$('gvv-wheel').style.transform=`rotate(${angle}deg)`;
-await new Promise(r=>setTimeout(r,5200));const {data,error}=await client.from('giveaways').update({winner:winner.twitch_username,status:'finished',is_open:false}).eq('id',active.id).is('winner',null).eq('is_open',false).select('id');
-spinning=false;if(error||!data?.length){say('Ergebnis konnte nicht gespeichert werden – bitte prüfen und nicht erneut drehen.');await loadData();return;}
-say('Gewinner gespeichert!');await loadData();}
+
+async function spin() {
+  if (
+    !active ||
+    active.is_open ||
+    active.status !== 'closed' ||
+    spinning ||
+    active.winner ||
+    entries.length < 2
+  ) return;
+
+  spinning = true;
+  syncSpin();
+  say('Auslosung läuft …');
+
+  // Supabase lost den Gewinner sicher aus.
+  const { data: winnerName, error } = await client.rpc(
+    'gvv_draw_winner',
+    { p_giveaway_id: active.id }
+  );
+
+  if (error || !winnerName) {
+    spinning = false;
+    syncSpin();
+    say('Auslosung fehlgeschlagen: ' +
+      (error?.message || 'Kein Gewinner erhalten'));
+    await loadData();
+    return;
+  }
+
+  // Position des Gewinners auf dem Rad suchen.
+  const index = entries.findIndex(
+    e => e.twitch_username === winnerName
+  );
+
+  if (index === -1) {
+    spinning = false;
+    syncSpin();
+    say('Gewinner wurde gespeichert, ist aber nicht auf dem Rad sichtbar.');
+    await loadData();
+    return;
+  }
+
+  // Glücksrad-Animation wie bisher.
+  const target =
+    (360 - (index + .5) * 360 / entries.length + 360) % 360;
+
+  const current = ((angle % 360) + 360) % 360;
+
+  angle += 360 * 7 + ((target - current + 360) % 360);
+
+  $('gvv-wheel').style.transform =
+    `rotate(${angle}deg)`;
+
+  await new Promise(r => setTimeout(r, 5200));
+
+  spinning = false;
+  say('Gewinner gespeichert!');
+  await loadData();
+}
+
 async function updateAuth(){const {data:{user},error}=await client.auth.getUser();role=null;admin.classList.add('gvv-hidden');wheelPanel.classList.add('gvv-hidden');if(error||!user){authStatus.textContent='Nicht angemeldet.';login.style.display='inline-flex';login.disabled=false;logout.style.display='none';return;}
 const name=user.user_metadata?.preferred_username||user.user_metadata?.user_name||user.user_metadata?.name||'Twitch-Nutzer';login.style.display='none';logout.style.display='inline-flex';
 const {data,error:re}=await client.rpc('gvv_my_role');if(re){authStatus.textContent=`Angemeldet als ${name}. Rollenprüfung noch nicht eingerichtet.`;return;}
