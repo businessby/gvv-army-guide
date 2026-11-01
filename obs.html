@@ -36,7 +36,7 @@ h1{font:900 51px/1.06 'Barlow Condensed',Impact,sans-serif;margin:5px 0 8px;text
 const url='https://toltcdkdiwsuanwaqwti.supabase.co';
 const publishableKey='sb_publishable_mXLc22ZuaDOe7A39IIwoQQ_GlK3BUVI';
 const $=id=>document.getElementById(id);
-let client,previous=null,signature='',rotation=0,busy=false,spinNonce=0,hideTimer=null,openedGiveawayId=null;
+let client,previous=null,signature='',rotation=0,busy=false,spinNonce=0,hideTimer=null;
 const setVisible=visible=>$('stage').classList.toggle('is-hidden',!visible);
 function cancelHide(){if(hideTimer!==null){clearTimeout(hideTimer);hideTimer=null;}}
 function hideAfterWin(){cancelHide();hideTimer=setTimeout(()=>{if(previous?.status==='finished')setVisible(false);hideTimer=null;},15000);}
@@ -53,8 +53,15 @@ async function refresh(){
  try{
   const {data,error}=await client.rpc('gvv_public_giveaway');if(error)throw error;
   const next=data&&typeof data==='object'?data:null;
+  // Database remembers whether registration was ever open, including across OBS restarts.
+  let hasOpened=false;
+  if(next?.id!=null){
+   const {data:opened,error:openedError}=await client.rpc('gvv_overlay_has_opened',{p_giveaway_id:next.id});
+   if(openedError)throw openedError;
+   hasOpened=opened===true;
+  }
   const names=Array.isArray(next?.participants)?next.participants.map(nameOf).filter(Boolean):[];
-  const sig=JSON.stringify([next?.id,next?.prize,next?.keyword,next?.status,next?.winner,names]);
+  const sig=JSON.stringify([next?.id,next?.prize,next?.keyword,next?.status,next?.winner,hasOpened,names]);
   $('connection').textContent='● Live-Anzeige verbunden · Aktualisierung ca. alle 3 Sekunden';
   if(sig===signature)return;
   const old=previous;previous=next;signature=sig;
@@ -65,10 +72,10 @@ async function refresh(){
   $('names').textContent=names.join('  ·  ');
   const newGiveaway=old?.id!==next?.id;
   const justFinished=!newGiveaway&&old?.status!=='finished'&&next?.status==='finished'&&!!next?.winner;
-  if(newGiveaway){spinNonce++;resetWheel();cancelHide();openedGiveawayId=null;}
-  // Only show after sign-ups actually open. A newly created closed giveaway stays hidden.
-  if(next?.status==='open')openedGiveawayId=next.id;
-  if(next?.status==='open'||(next?.status==='closed'&&openedGiveawayId===next?.id)){cancelHide();setVisible(true);}
+  if(newGiveaway){spinNonce++;resetWheel();cancelHide();}
+  // A newly created draft stays hidden. A closed, previously opened giveaway
+  // remains visible even when OBS is restarted with no participants.
+  if(next?.status==='open'||(next?.status==='closed'&&hasOpened)){cancelHide();setVisible(true);}
   else if(next?.status==='closed'){cancelHide();setVisible(false);}
   else if(next?.status==='finished'&&justFinished){setVisible(true);hideAfterWin();}
   else if(next?.status==='finished'||!next){cancelHide();setVisible(false);}
