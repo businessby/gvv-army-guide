@@ -319,7 +319,19 @@ try{const {createClient}=await import('https://cdn.jsdelivr.net/npm/@supabase/su
 await refreshPublicGiveaway();
 publicTimer=setInterval(refreshPublicGiveaway,3000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshPublicGiveaway();});
-login.disabled=false;login.addEventListener('click',async()=>{login.disabled=true;const {error}=await client.auth.signInWithOAuth({provider:'twitch',options:{redirectTo:'https://businessby.github.io/gvv-army-guide/GVV-Army-Guide-Giveaway-Verwaltung.html'}});if(error){authStatus.textContent=error.message;login.disabled=false;}});
+login.disabled=false;login.addEventListener('click',async()=>{
+  login.disabled=true;
+  // Nur nach einem bewusst gestarteten Twitch-Login zum Giveaway springen.
+  try{sessionStorage.setItem('gvv_scroll_after_twitch_login','1');}catch(_e){}
+  const {error}=await client.auth.signInWithOAuth({
+    provider:'twitch',
+    options:{redirectTo:'https://businessby.github.io/gvv-army-guide/GVV-Army-Guide-Giveaway-Verwaltung.html'}
+  });
+  if(error){
+    try{sessionStorage.removeItem('gvv_scroll_after_twitch_login');}catch(_e){}
+    authStatus.textContent=error.message;login.disabled=false;
+  }
+});
 logout.addEventListener('click',async()=>{await client.auth.signOut();await updateAuth()});
 $('gvv-save').addEventListener('click',save);$('gvv-open').addEventListener('click',()=>setState(true));$('gvv-close').addEventListener('click',()=>setState(false));$('gvv-refresh').addEventListener('click',loadData);$('gvv-spin').addEventListener('click',spin);
 $('gvv-new-toggle').addEventListener('click',()=>{
@@ -329,6 +341,18 @@ $('gvv-new-toggle').addEventListener('click',()=>{
 $('gvv-new-cancel').addEventListener('click',()=>showNewGiveaway(false));
 $('gvv-new-create').addEventListener('click',createGiveaway);
 $('gvv-mod-add').addEventListener('click',addModerator);$('gvv-mod-refresh').addEventListener('click',loadModerators);
-await updateAuth();}catch(e){authStatus.textContent='Verbindung konnte nicht geladen werden. Bitte Browser-Konsole/Internetverbindung prüfen.';}}
+await updateAuth();
+// Die Twitch-Rueckleitung landet ohne #giveaway; nur nach erfolgreichem Login scrollen.
+try{
+  if(sessionStorage.getItem('gvv_scroll_after_twitch_login')==='1'){
+    const {data:{user}}=await client.auth.getUser();
+    if(user){
+      sessionStorage.removeItem('gvv_scroll_after_twitch_login');
+      history.replaceState(null,'',location.pathname+location.search+'#giveaway');
+      document.getElementById('giveaway')?.scrollIntoView({behavior:'instant',block:'start'});
+    }
+  }
+}catch(_e){}
+}catch(e){authStatus.textContent='Verbindung konnte nicht geladen werden. Bitte Browser-Konsole/Internetverbindung prüfen.';}}
 init();
 </script></body></html>
