@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GVV Army | OBS Reroll-Test</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800;900&family=Inter:wght@500;600;700&display=swap');
+:root{color-scheme:dark;--orange:#ff7900;--white:#fff8f0;--muted:#d6c7bb}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;background:transparent!important;overflow:hidden;color:var(--white);font-family:Inter,Arial,sans-serif}
+.stage{width:100%;height:100%;display:flex;align-items:center;justify-content:center;padding:32px;opacity:1;visibility:visible;transition:opacity .5s ease,visibility .5s ease}.stage.is-hidden{opacity:0;visibility:hidden;pointer-events:none}
+.panel{width:940px;max-width:100%;padding:28px 38px 28px;text-align:center;border:2px solid rgba(255,121,0,.88);border-radius:26px;background:rgba(12,10,10,.91);box-shadow:0 12px 55px #0009}
+.kicker{font:800 26px 'Barlow Condensed',Impact,sans-serif;color:var(--orange);letter-spacing:.12em}
+h1{font:900 51px/1.06 'Barlow Condensed',Impact,sans-serif;margin:5px 0 8px;text-transform:uppercase;overflow-wrap:anywhere}
+.meta{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:12px;margin:10px 0 10px}
+.pill{padding:4px 15px;border:1px solid #b66228;border-radius:99px;background:#301a0c;font-size:17px;font-weight:700}
+.keyword{color:#ffb470;font-size:19px;font-weight:700}
+.wheel-wrap{width:min(590px,52vh);height:min(590px,52vh);margin:20px auto 16px;position:relative}
+.wheel{position:absolute;inset:0;border-radius:50%;border:12px solid var(--orange);box-shadow:0 8px 30px #000c;overflow:hidden;background:#352115;transition:transform 5s cubic-bezier(.12,.73,.1,1)}
+.pointer{position:absolute;z-index:4;top:-20px;left:50%;transform:translateX(-50%);border-left:25px solid transparent;border-right:25px solid transparent;border-top:49px solid #fff8f0;filter:drop-shadow(0 3px 5px #000)}
+.hub{position:absolute;z-index:3;top:50%;left:50%;transform:translate(-50%,-50%);height:72px;width:72px;border:10px solid var(--orange);border-radius:50%;background:#fff7ef}
+.wheel-label{position:absolute;left:50%;top:50%;font:800 16px 'Barlow Condensed',Impact,sans-serif;white-space:nowrap;max-width:210px;overflow:hidden;text-overflow:ellipsis;color:white;text-shadow:1px 2px 5px #000;transform-origin:0 0}
+.result{min-height:47px;font:900 35px 'Barlow Condensed',Impact,sans-serif;color:#ff9f49;line-height:1.2;overflow-wrap:anywhere}
+.info{font-size:15px;color:var(--muted);margin-top:7px}
+.names{font-size:14px;color:#d9c1ab;max-height:43px;overflow:hidden;line-height:1.5;margin-top:7px;overflow-wrap:anywhere}
+@media(max-height:800px){.panel{padding:15px 26px}.wheel-wrap{width:min(500px,50vh);height:min(500px,50vh);margin:9px auto}.kicker{font-size:20px}h1{font-size:40px}.result{font-size:28px}}
+@media(prefers-reduced-motion:reduce){.wheel{transition-duration:.01ms}}
+</style></head><body>
+<div class="stage is-hidden" id="stage"><section class="panel" aria-label="GVV Army Live-Glücksrad">
+<div class="kicker">🎯 MAYWEE180 · GVV ARMY <span style="font-size:17px;color:#fff">· REROLL TEST</span></div><h1 id="prize">Giveaway wird geladen …</h1>
+<div class="meta"><span class="pill" id="state">Verbinde …</span><span class="pill" id="count">0 Teilnehmer</span></div>
+<div class="keyword" id="keyword"></div>
+<div class="wheel-wrap"><div class="wheel" id="wheel"></div><div class="pointer"></div><div class="hub"></div></div>
+<div class="result" id="winner">Noch kein Gewinner ausgelost.</div>
+<div class="info" id="countdown" aria-live="polite"></div>
+<div class="names" id="names"></div><div class="info" id="connection">Verbinde mit Supabase …</div>
+</section></div>
+<script type="module">
+// Public / publishable key only. Do not insert any secret key or Streamer.bot token.
+const url='https://toltcdkdiwsuanwaqwti.supabase.co';
+const publishableKey='sb_publishable_mXLc22ZuaDOe7A39IIwoQQ_GlK3BUVI';
+const $=id=>document.getElementById(id);
+let client, busy=false, lastGiveawayId=null, lastRoundId=null, lastRoundStatus=null;
+let rotation=0, spinNonce=0, hideTimer=null, activeRound=null, activeGiveaway=null;
+const setVisible=on=>$('stage').classList.toggle('is-hidden',!on);
+const cancelHide=()=>{if(hideTimer!==null){clearTimeout(hideTimer);hideTimer=null;}};
+const nameOf=x=>typeof x==='string'?x:'';
+const palette=['#e86e0b','#75370c','#c55408','#502715','#9c410a','#ee850d'];
+function renderWheel(people){
+ const el=$('wheel'),n=people.length;el.replaceChildren();
+ el.style.background=n?'conic-gradient('+people.map((_,i)=>`${palette[i%palette.length]} ${i*360/n}deg ${(i+1)*360/n}deg`).join(',')+')':'#352115';
+ people.forEach((person,i)=>{const span=document.createElement('span');span.className='wheel-label';span.textContent=person;span.style.transform=`rotate(${(i+.5)*360/n-90}deg) translate(43px,-7px)`;el.append(span);});
+}
+function resetWheel(){const el=$('wheel');el.style.transition='none';el.style.transform='rotate(0deg)';rotation=0;void el.offsetWidth;el.style.transition='';}
+function tick(){
+ const r=activeRound;
+ if(!r||!['pending','responded'].includes(r.status)){$('countdown').textContent='';return;}
+ const ms=Math.max(0,new Date(r.deadline).getTime()-Date.now());
+ const total=Math.ceil(ms/1000);
+ const mins=String(Math.floor(total/60)).padStart(2,'0');
+ const secs=String(total%60).padStart(2,'0');
+ $('countdown').textContent=r.status==='responded'?'✅ Chat-Antwort erkannt · wartet auf Bestätigung':
+   total>0?`⏳ Antwortzeit: ${mins}:${secs}`:'⏳ Antwortfrist abgelaufen · wartet auf Reroll';
+}
+function spinTo(winner, names, roundId){
+ const index=names.findIndex(n=>n.toLowerCase()===String(winner).toLowerCase());
+ const nonce=++spinNonce;
+ if(index<0){$('winner').textContent='🎯 Vorläufig: @'+winner;return;}
+ $('winner').textContent='🎡 Auslosung läuft …';
+ const target=(360-(index+.5)*360/names.length+360)%360;
+ const current=((rotation%360)+360)%360;
+ rotation+=360*7+((target-current+360)%360);
+ requestAnimationFrame(()=>{$('wheel').style.transform=`rotate(${rotation}deg)`;});
+ setTimeout(()=>{
+  if(nonce===spinNonce&&activeRound?.round_id===roundId){
+   $('winner').textContent=activeRound.status==='confirmed'?'🏆 Gewinner: @'+winner:'🎯 Vorläufig: @'+winner;
+  }
+ },5300);
+}
+function scheduleHide(roundId){
+ cancelHide();hideTimer=setTimeout(()=>{
+  if(activeRound?.round_id===roundId&&activeRound?.status==='confirmed')setVisible(false);
+  hideTimer=null;
+ },15000);
+}
+async function refresh(){
+ if(busy||!client)return;busy=true;
+ try{
+  const [gResp,rResp]=await Promise.all([client.rpc('gvv_public_giveaway'),client.rpc('gvv_reroll_public_state')]);
+  if(gResp.error)throw gResp.error;if(rResp.error)throw rResp.error;
+  const g=gResp.data&&typeof gResp.data==='object'?gResp.data:null;
+  const state=rResp.data&&typeof rResp.data==='object'?rResp.data:{};
+  // Never mix a stale round from another giveaway with the current giveaway.
+  const r=g&&Number(state.giveaway_id)===Number(g.id)&&Number(state.round_id)>0?state:null;
+  const changedGiveaway=lastGiveawayId!==g?.id;
+  const newRound=!!r&&(changedGiveaway||lastRoundId!==r.round_id);
+  const statusChanged=!!r&&lastRoundStatus!==r.status;
+  const eligible=Array.isArray(r?.eligible_participants)?r.eligible_participants.map(nameOf).filter(Boolean):[];
+  activeGiveaway=g;activeRound=r;
+  $('connection').textContent='● Reroll-Test · Supabase-Abgleich alle 3 Sekunden';
+  $('prize').textContent=g?.prize||'Zurzeit kein Giveaway';
+  $('keyword').textContent=g?.keyword?'Teilnahme im Twitch-Chat: '+g.keyword:'';
+  $('count').textContent=`${eligible.length} berechtigte Teilnehmer`;
+  $('state').textContent=r?`Runde ${r.round_number} · ${r.status}`:'Kein Reroll';
+  $('names').textContent=eligible.join('  ·  ');
+  if(changedGiveaway){spinNonce++;cancelHide();resetWheel();}
+  // This is a test overlay: no legacy finished-status spin, only reroll rounds.
+  if(!r){setVisible(false);lastRoundId=null;lastRoundStatus=null;lastGiveawayId=g?.id;return;}
+  if(newRound){
+   cancelHide();resetWheel();renderWheel(eligible);
+   // Do not replay already confirmed historical rounds when opening OBS.
+   if(r.status==='confirmed')setVisible(false);
+   else{setVisible(true);spinTo(r.winner,eligible,r.round_id);}
+  }else if(statusChanged){
+   if(r.status==='confirmed'){
+    $('winner').textContent='🏆 Gewinner: @'+r.winner;
+    setVisible(true);scheduleHide(r.round_id);
+   }else if(r.status==='responded'){
+    $('winner').textContent='✅ @'+r.winner+' hat geantwortet';setVisible(true);
+   }else if(r.status==='excluded')setVisible(false);
+  }
+  tick();lastRoundId=r.round_id;lastRoundStatus=r.status;lastGiveawayId=g?.id;
+ }catch(err){$('connection').textContent='Verbindung fehlgeschlagen: '+(err?.message||'Unbekannter Fehler');}
+ finally{busy=false;}
+}
+setInterval(tick,250);
+
+try{
+ const {createClient}=await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
+ client=createClient(url,publishableKey,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}});
+ await refresh();setInterval(refresh,3000);
+ 
+}catch(err){$('connection').textContent='Verbindung fehlgeschlagen: '+(err?.message||'Unbekannter Fehler');}
+</script></body></html>
