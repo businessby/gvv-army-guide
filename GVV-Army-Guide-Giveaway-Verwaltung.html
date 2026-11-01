@@ -319,7 +319,7 @@ try{const {createClient}=await import('https://cdn.jsdelivr.net/npm/@supabase/su
 await refreshPublicGiveaway();
 publicTimer=setInterval(refreshPublicGiveaway,3000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshPublicGiveaway();});
-login.disabled=false;login.addEventListener('click',async()=>{login.disabled=true;const {error}=await client.auth.signInWithOAuth({provider:'twitch',options:{redirectTo:'https://businessby.github.io/gvv-army-guide/'}});if(error){authStatus.textContent=error.message;login.disabled=false;}});
+login.disabled=false;login.addEventListener('click',async()=>{login.disabled=true;const {error}=await client.auth.signInWithOAuth({provider:'twitch',options:{redirectTo:'https://businessby.github.io/gvv-army-guide/GVV-Army-Guide-Giveaway-Verwaltung.html'}});if(error){authStatus.textContent=error.message;login.disabled=false;}});
 logout.addEventListener('click',async()=>{await client.auth.signOut();await updateAuth()});
 $('gvv-save').addEventListener('click',save);$('gvv-open').addEventListener('click',()=>setState(true));$('gvv-close').addEventListener('click',()=>setState(false));$('gvv-refresh').addEventListener('click',loadData);$('gvv-spin').addEventListener('click',spin);
 $('gvv-new-toggle').addEventListener('click',()=>{
