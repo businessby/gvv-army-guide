@@ -93,5 +93,6 @@ try{
  const {createClient}=await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
  client=createClient(url,publishableKey,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}});
  await refresh();setInterval(refresh,3000);
+ 
 }catch(err){$('connection').textContent='Verbindung fehlgeschlagen: '+(err?.message||'Unbekannter Fehler');}
 </script></body></html>
