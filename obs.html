@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GVV Army | OBS Glücksrad</title>
+<title>GVV Army | OBS Glücksrad – Reroll</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800;900&family=Inter:wght@500;600;700&display=swap');
 :root{color-scheme:dark;--orange:#ff7900;--white:#fff8f0;--muted:#d6c7bb}
@@ -29,6 +29,7 @@ h1{font:900 51px/1.06 'Barlow Condensed',Impact,sans-serif;margin:5px 0 8px;text
 <div class="keyword" id="keyword"></div>
 <div class="wheel-wrap"><div class="wheel" id="wheel"></div><div class="pointer"></div><div class="hub"></div></div>
 <div class="result" id="winner">Noch kein Gewinner ausgelost.</div>
+<div class="info" id="countdown" aria-live="polite"></div>
 <div class="names" id="names"></div><div class="info" id="connection">Verbinde mit Supabase …</div>
 </section></div>
 <script type="module">
@@ -36,10 +37,10 @@ h1{font:900 51px/1.06 'Barlow Condensed',Impact,sans-serif;margin:5px 0 8px;text
 const url='https://toltcdkdiwsuanwaqwti.supabase.co';
 const publishableKey='sb_publishable_mXLc22ZuaDOe7A39IIwoQQ_GlK3BUVI';
 const $=id=>document.getElementById(id);
-let client,previous=null,signature='',rotation=0,busy=false,spinNonce=0,hideTimer=null;
-const setVisible=visible=>$('stage').classList.toggle('is-hidden',!visible);
-function cancelHide(){if(hideTimer!==null){clearTimeout(hideTimer);hideTimer=null;}}
-function hideAfterWin(){cancelHide();hideTimer=setTimeout(()=>{if(previous?.status==='finished')setVisible(false);hideTimer=null;},15000);}
+let client, busy=false, lastGiveawayId=null, lastRoundId=null, lastRoundStatus=null;
+let rotation=0, spinNonce=0, hideTimer=null, activeRound=null, activeGiveaway=null, lastNamesSignature="";
+const setVisible=on=>$('stage').classList.toggle('is-hidden',!on);
+const cancelHide=()=>{if(hideTimer!==null){clearTimeout(hideTimer);hideTimer=null;}};
 const nameOf=x=>typeof x==='string'?x:'';
 const palette=['#e86e0b','#75370c','#c55408','#502715','#9c410a','#ee850d'];
 function renderWheel(people){
@@ -48,54 +49,102 @@ function renderWheel(people){
  people.forEach((person,i)=>{const span=document.createElement('span');span.className='wheel-label';span.textContent=person;span.style.transform=`rotate(${(i+.5)*360/n-90}deg) translate(43px,-7px)`;el.append(span);});
 }
 function resetWheel(){const el=$('wheel');el.style.transition='none';el.style.transform='rotate(0deg)';rotation=0;void el.offsetWidth;el.style.transition='';}
+function tick(){
+ const r=activeRound;
+ if(!r||!['pending','responded'].includes(r.status)){$('countdown').textContent='';return;}
+ const ms=Math.max(0,new Date(r.deadline).getTime()-Date.now());
+ const total=Math.ceil(ms/1000);
+ const mins=String(Math.floor(total/60)).padStart(2,'0');
+ const secs=String(total%60).padStart(2,'0');
+ $('countdown').textContent=r.status==='responded'?'✅ Chat-Antwort erkannt · wartet auf Bestätigung':
+   total>0?`⏳ Antwortzeit: ${mins}:${secs}`:'⏳ Antwortfrist abgelaufen · wartet auf Reroll';
+}
+function spinTo(winner, names, roundId){
+ const index=names.findIndex(n=>n.toLowerCase()===String(winner).toLowerCase());
+ const nonce=++spinNonce;
+ if(index<0){$('winner').textContent='🎯 Vorläufig: @'+winner;return;}
+ $('winner').textContent='🎡 Auslosung läuft …';
+ const target=(360-(index+.5)*360/names.length+360)%360;
+ const current=((rotation%360)+360)%360;
+ rotation+=360*7+((target-current+360)%360);
+ requestAnimationFrame(()=>{$('wheel').style.transform=`rotate(${rotation}deg)`;});
+ setTimeout(()=>{
+  if(nonce===spinNonce&&activeRound?.round_id===roundId){
+   $('winner').textContent=activeRound.status==='confirmed'?'🏆 Gewinner: @'+winner:'🎯 Vorläufig: @'+winner;
+  }
+ },5300);
+}
+function scheduleHide(roundId){
+ cancelHide();hideTimer=setTimeout(()=>{
+  if(activeRound?.round_id===roundId&&activeRound?.status==='confirmed')setVisible(false);
+  hideTimer=null;
+ },15000);
+}
 async function refresh(){
  if(busy||!client)return;busy=true;
  try{
-  const {data,error}=await client.rpc('gvv_public_giveaway');if(error)throw error;
-  const next=data&&typeof data==='object'?data:null;
-  // Database remembers whether registration was ever open, including across OBS restarts.
+  const [gResp,rResp]=await Promise.all([client.rpc('gvv_public_giveaway'),client.rpc('gvv_reroll_public_state')]);
+  if(gResp.error)throw gResp.error;if(rResp.error)throw rResp.error;
+  const g=gResp.data&&typeof gResp.data==='object'?gResp.data:null;
+  const state=rResp.data&&typeof rResp.data==='object'?rResp.data:{};
+  // Never mix a stale round from another giveaway with the current giveaway.
+  const r=g&&Number(state.giveaway_id)===Number(g.id)&&Number(state.round_id)>0?state:null;
+  const changedGiveaway=lastGiveawayId!==g?.id;
+  const newRound=!!r&&(changedGiveaway||lastRoundId!==r.round_id);
+  const statusChanged=!!r&&lastRoundStatus!==r.status;
+  const participants=Array.isArray(g?.participants)?g.participants.map(nameOf).filter(Boolean):[];
+  const eligible=Array.isArray(r?.eligible_participants)?r.eligible_participants.map(nameOf).filter(Boolean):[];
+  const wheelNames=r?eligible:participants;
   let hasOpened=false;
-  if(next?.id!=null){
-   const {data:opened,error:openedError}=await client.rpc('gvv_overlay_has_opened',{p_giveaway_id:next.id});
-   if(openedError)throw openedError;
-   hasOpened=opened===true;
+  if(g?.status==='closed'&&!r){
+   const openedResp=await client.rpc('gvv_overlay_has_opened',{p_giveaway_id:g.id});
+   if(openedResp.error)throw openedResp.error;
+   hasOpened=openedResp.data===true;
   }
-  const names=Array.isArray(next?.participants)?next.participants.map(nameOf).filter(Boolean):[];
-  const sig=JSON.stringify([next?.id,next?.prize,next?.keyword,next?.status,next?.winner,hasOpened,names]);
-  $('connection').textContent='● Live-Anzeige verbunden · Aktualisierung ca. alle 3 Sekunden';
-  if(sig===signature)return;
-  const old=previous;previous=next;signature=sig;
-  $('prize').textContent=next?.prize||'Zurzeit kein Giveaway';
-  $('state').textContent=next?.status||'Kein Giveaway';
-  $('count').textContent=`${names.length} Teilnehmer`;
-  $('keyword').textContent=next?.keyword?'Teilnahme im Twitch-Chat: '+next.keyword:'';
-  $('names').textContent=names.join('  ·  ');
-  const newGiveaway=old?.id!==next?.id;
-  const justFinished=!newGiveaway&&old?.status!=='finished'&&next?.status==='finished'&&!!next?.winner;
-  if(newGiveaway){spinNonce++;resetWheel();cancelHide();}
-  // A newly created draft stays hidden. A closed, previously opened giveaway
-  // remains visible even when OBS is restarted with no participants.
-  if(next?.status==='open'||(next?.status==='closed'&&hasOpened)){cancelHide();setVisible(true);}
-  else if(next?.status==='closed'){cancelHide();setVisible(false);}
-  else if(next?.status==='finished'&&justFinished){setVisible(true);hideAfterWin();}
-  else if(next?.status==='finished'||!next){cancelHide();setVisible(false);}
-  renderWheel(names);
-  if(justFinished){
-   const index=names.findIndex(n=>n.toLowerCase()===String(next.winner).toLowerCase());
-   if(index>=0){
-    $('winner').textContent='🎡 Auslosung läuft …';
-    const target=(360-(index+.5)*360/names.length+360)%360;
-    const current=((rotation%360)+360)%360;
-    rotation+=360*7+((target-current+360)%360);
-    $('wheel').style.transform=`rotate(${rotation}deg)`;
-    const nonce=++spinNonce;
-    setTimeout(()=>{if(nonce===spinNonce&&previous?.id===next.id&&previous?.winner===next.winner)$('winner').textContent='🏆 Gewinner: '+next.winner;},5200);
-   }else $('winner').textContent='🏆 Gewinner: '+next.winner;
-  }else if(!next?.winner){$('winner').textContent='Noch kein Gewinner ausgelost.';}
-  else if(!justFinished){$('winner').textContent='🏆 Gewinner: '+next.winner;}
+  activeGiveaway=g;activeRound=r;
+  $('connection').textContent='● Live-Anzeige verbunden · Supabase-Abgleich alle 3 Sekunden';
+  $('prize').textContent=g?.prize||'Zurzeit kein Giveaway';
+  $('keyword').textContent=g?.keyword?'Teilnahme im Twitch-Chat: '+g.keyword:'';
+  $('count').textContent=r?`${eligible.length} berechtigte Teilnehmer`:`${participants.length} Teilnehmer`;
+  $('state').textContent=r?`Runde ${r.round_number} · ${r.status}`:(g?.status==='open'?'Anmeldung offen':g?.status==='closed'?'Anmeldung geschlossen':g?.status||'Kein Giveaway');
+  $('names').textContent=wheelNames.join('  ·  ');
+  if(changedGiveaway){spinNonce++;cancelHide();resetWheel();lastNamesSignature='';}
+  const namesSignature=JSON.stringify(wheelNames);
+  if(namesSignature!==lastNamesSignature){renderWheel(wheelNames);lastNamesSignature=namesSignature;}
+  // A giveaway completed without a winner must not keep showing the last expired round.
+  // The final giveaway status takes priority over the last reroll-round status.
+  if(g?.status==='no_winner'){
+   spinNonce++;cancelHide();setVisible(false);
+   lastRoundId=r?.round_id??null;lastRoundStatus=r?.status??null;lastGiveawayId=g?.id;
+   return;
+  }
+  // Only the reroll protocol triggers the wheel (never the legacy final draw).
+  if(!r){
+   cancelHide();
+   setVisible(g?.status==='open'||(g?.status==='closed'&&hasOpened));
+   $('winner').textContent='Noch kein Gewinner ausgelost.';
+   $('countdown').textContent='';
+   lastRoundId=null;lastRoundStatus=null;lastGiveawayId=g?.id;return;
+  }
+  if(newRound){
+   cancelHide();resetWheel();renderWheel(eligible);
+   // Do not replay already confirmed historical rounds when opening OBS.
+   if(r.status==='confirmed')setVisible(false);
+   else{setVisible(true);spinTo(r.winner,eligible,r.round_id);}
+  }else if(statusChanged){
+   if(r.status==='confirmed'){
+    $('winner').textContent='🏆 Gewinner: @'+r.winner;
+    setVisible(true);scheduleHide(r.round_id);
+   }else if(r.status==='responded'){
+    $('winner').textContent='✅ @'+r.winner+' hat geantwortet';setVisible(true);
+   }else if(r.status==='excluded')setVisible(false);
+  }
+  tick();lastRoundId=r.round_id;lastRoundStatus=r.status;lastGiveawayId=g?.id;
  }catch(err){$('connection').textContent='Verbindung fehlgeschlagen: '+(err?.message||'Unbekannter Fehler');}
  finally{busy=false;}
 }
+setInterval(tick,250);
+
 try{
  const {createClient}=await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
  client=createClient(url,publishableKey,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}});
