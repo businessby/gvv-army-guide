@@ -189,14 +189,14 @@ async function refreshPublicGiveaway(){
     $('gvv-public-live-state').textContent='● Live-Anzeige verbunden';
     const wheel=$('gvv-public-wheel');
     const isNew=!old||old.id!==next?.id;
-    const justFinished=!isNew&&old?.status!=='finished'&&next?.status==='finished'&&!!next?.winner;
+    // Eine Gewinnerbestaetigung ist keine neue Auslosung und darf das Rad nicht erneut drehen.
     const newRound=!!publicRound?.round_id && !isNew && publicRound.round_id!==publicLastRoundId;
     publicLastRoundId=publicRound?.round_id||null;
     const shownWinner=publicRound?.winner||next?.winner||null;
     if(isNew){wheel.style.transition='none';wheel.style.transform='rotate(0deg)';publicWheelAngle=0;}
     drawWheelFor(wheel,names);
     if(isNew){void wheel.offsetWidth;wheel.style.transition='';}
-    if(newRound||justFinished){
+    if(newRound){
       const index=names.findIndex(name=>name.toLowerCase()===String(shownWinner).toLowerCase());
       if(index>=0){
         $('gvv-public-winner').textContent='🎡 Auslosung läuft …';
@@ -207,7 +207,7 @@ async function refreshPublicGiveaway(){
         const winner=shownWinner;
         setTimeout(()=>{
           if(publicSnapshot?.id===next.id)
-            $('gvv-public-winner').textContent=next.status==='finished'?'🏆 Gewinner: '+winner:'🎡 Vorläufig gezogen: '+winner;
+            $('gvv-public-winner').textContent=publicSnapshot.status==='finished'?'🏆 Gewinner: '+(publicSnapshot.winner||winner):'🎡 Vorläufig gezogen: '+winner;
         },5200);
       }else $('gvv-public-winner').textContent='🎡 Gezogen: '+shownWinner;
     }else if(next?.status==='no_winner'){$('gvv-public-winner').textContent='🚫 Giveaway ohne Gewinner beendet';}
